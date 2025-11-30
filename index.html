@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>唯美樱花 AR (悬浮球版)</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            font-family: 'Segoe UI', sans-serif; 
+            background-color: #000;
+        }
+        
+        /* 视频背景：电影感滤镜 */
+        #input_video { 
+            position: absolute; 
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); 
+            z-index: -1;
+            opacity: 0; 
+            transition: all 0.8s ease; 
+        }
+
+        #input_video.active {
+            opacity: 1;
+            /* 亮度适中，对比度增强，保留色彩，微虚化 */
+            filter: brightness(0.7) contrast(1.1) saturate(0.9) blur(5px);
+        }
+
+        /* 暗角遮罩：让四周变暗，突出中心粒子 */
+        #vignette-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, rgba(0,0,0,0) 50%, rgba(0,0,0,0.5) 100%);
+            z-index: -1;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.8s;
+        }
+        #vignette-overlay.active { opacity: 1; }
+
+        /* 默认深空背景 */
+        #bg-gradient {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle at center, #1a0b10 0%, #000000 100%);
+            z-index: -2;
+            transition: opacity 0.5s;
+        }
+
+        /* --- 悬浮球按钮 (UI入口) --- */
+        #menu-btn {
+            position: absolute;
+            top: 20px; left: 20px;
+            width: 48px; height: 48px;
+            border-radius: 50%;
+            /* 唯美樱花粉底色 */
+            background: rgba(255, 133, 162, 0.2); 
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 133, 162, 0.5);
+            color: #fff;
+            font-size: 24px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            z-index: 20; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        #menu-btn:hover {
+            transform: scale(1.1) rotate(180deg);
+            background: rgba(255, 133, 162, 0.6);
+            box-shadow: 0 0 20px rgba(255, 133, 162, 0.5);
+        }
+
+        /* --- UI 面板 (默认隐藏) --- */
+        #ui-container {
+            position: absolute;
+            top: 80px; 
+            left: 20px;
+            background: rgba(30, 20, 25, 0.8);
+            backdrop-filter: blur(15px);
+            padding: 24px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 133, 162, 0.3);
+            color: #fff;
+            z-index: 10;
+            width: 250px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+            
+            /* 隐藏/显示动画 */
+            transform-origin: top left;
+            transform: scale(0.8) translateY(-20px);
+            opacity: 0;
+            pointer-events: none; 
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        #ui-container.show {
+            transform: scale(1) translateY(0);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        h2 { 
+            margin: 0 0 15px 0; font-size: 18px; font-weight: 700; 
+            /* 标题：樱花粉 */
+            color: #ff85a2;
+            text-shadow: 0 0 10px rgba(255, 133, 162, 0.5);
+            letter-spacing: 2px;
+        }
+        
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; }
+        
+        button {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #eee;
+            padding: 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        button:hover { background: rgba(255, 133, 162, 0.3); color: white; border-color: #ff85a2; }
+        button.active { 
+            background: rgba(255, 133, 162, 0.9); 
+            border: none; color: white; font-weight: bold;
+            box-shadow: 0 0 15px rgba(255, 133, 162, 0.6); 
+        }
+
+        .toggle-wrapper {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 15px; padding-bottom: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .toggle-label { font-size: 13px; color: #ddd; }
+        
+        /* 开关样式 */
+        .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #555; transition: .4s; border-radius: 34px;
+        }
+        .slider:before {
+            position: absolute; content: ""; height: 16px; width: 16px;
+            left: 3px; bottom: 3px; background-color: white;
+            transition: .4s; border-radius: 50%;
+        }
+        input:checked + .slider { background-color: #ff85a2; }
+        input:checked + .slider:before { transform: translateX(18px); }
+
+        .control-group { margin-bottom: 10px; }
+        input[type="color"] { width: 100%; height: 35px; border: none; background: none; cursor: pointer; }
+
+        #status-bar {
+            margin-top: 15px; padding-top: 15px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            display: flex; align-items: center; gap: 10px;
+        }
+        .dot { width: 8px; height: 8px; background: #555; border-radius: 50%; }
+        #status-text { font-size: 12px; color: #888; }
+
+        #fs-btn {
+            position: absolute; bottom: 30px; right: 30px;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: white; width: 44px; height: 44px;
+            border-radius: 50%; cursor: pointer; z-index: 10;
+            font-size: 18px; transition: 0.3s;
+            backdrop-filter: blur(5px);
+        }
+        #fs-btn:hover { background: rgba(255, 133, 162, 0.4); transform: scale(1.1); box-shadow: 0 0 15px #ff85a2; }
+
+        #loader {
+            position: absolute; top:0; left:0; width:100%; height:100%;
+            background: #000; z-index: 99;
+            display: flex; justify-content: center; align-items: center;
+            flex-direction: column; color: white; transition: opacity 0.6s;
+        }
+    </style>
+
+    <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="loader">
+        <p style="font-size:16px; letter-spacing:4px; color:#ff85a2;">SAKURA PINK</p>
+        <p style="font-size: 12px; color: #666; margin-top:10px;">引擎启动中...</p>
+    </div>
+
+    <div id="bg-gradient"></div>
+    <video id="input_video"></video>
+    <div id="vignette-overlay"></div>
+
+    <!-- 悬浮球按钮 -->
+    <div id="menu-btn" onclick="toggleMenu()">🌸</div>
+
+    <div id="ui-container">
+        <h2>🌸 唯美樱花</h2>
+        
+        <div class="toggle-wrapper">
+            <span class="toggle-label">📷 AR 现实背景</span>
+            <label class="switch">
+                <input type="checkbox" id="ar-toggle" onchange="toggleAR(this)">
+                <span class="slider"></span>
+            </label>
+        </div>
+
+        <div class="btn-grid">
+            <button onclick="setShape('heart')" class="active" id="btn-heart">❤️ 满心</button>
+            <button onclick="setShape('saturn')" id="btn-saturn">🪐 土星</button>
+            <button onclick="setShape('sphere')" id="btn-sphere">🔮 晶球</button>
+            <button onclick="setShape('galaxy')" id="btn-galaxy">🌌 星旋</button>
+            <button onclick="setShape('dna')" id="btn-dna">🧬 DNA</button>
+            <button onclick="setShape('ring')" id="btn-ring">⭕ 光环</button>
+        </div>
+        <div class="control-group">
+            <label style="font-size:12px;color:#aaa">辉光颜色</label>
+            <!-- 默认颜色：#ff85a2 (中调樱花粉，不淡也不艳) -->
+            <input type="color" id="colorPicker" value="#ff85a2">
+        </div>
+        <div id="status-bar">
+            <div class="dot" id="status-dot"></div>
+            <div id="status-text">等待手势...</div>
+        </div>
+    </div>
+
+    <button id="fs-btn" onclick="toggleFullScreen()">⛶</button>
+
+    <script>
+        window.onerror = function() {}; 
+
+        // --- UI 切换 ---
+        function toggleMenu() {
+            const ui = document.getElementById('ui-container');
+            const btn = document.getElementById('menu-btn');
+            
+            if (ui.classList.contains('show')) {
+                ui.classList.remove('show');
+                btn.style.transform = 'rotate(0deg)';
+                btn.innerHTML = "🌸"; // 关的时候显示樱花
+            } else {
+                ui.classList.add('show');
+                btn.style.transform = 'rotate(45deg)';
+                btn.innerHTML = "➕"; // 开的时候显示叉号(由加号旋转)
+            }
+        }
+
+        // --- AR 切换 ---
+        function toggleAR(checkbox) {
+            const video = document.getElementById('input_video');
+            const bg = document.getElementById('bg-gradient');
+            const vignette = document.getElementById('vignette-overlay');
+            
+            if(checkbox.checked) {
+                video.classList.add('active');
+                vignette.classList.add('active');
+                bg.style.opacity = 0;
+            } else {
+                video.classList.remove('active');
+                vignette.classList.remove('active');
+                bg.style.opacity = 1;
+            }
+        }
+
+        const scene = new THREE.Scene();
+        scene.fog = null;
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 28;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        document.body.appendChild(renderer.domElement);
+
+        let controls;
+        if (THREE.OrbitControls) {
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.enableZoom = true;
+            controls.autoRotate = true; 
+            controls.autoRotateSpeed = 0.8;
+        }
+
+        // --- 装饰星尘 ---
+        const bgGeometry = new THREE.BufferGeometry();
+        const bgCount = 400; 
+        const bgPos = new Float32Array(bgCount * 3);
+        for(let i=0; i<bgCount*3; i++) bgPos[i] = (Math.random()-0.5)*350;
+        bgGeometry.setAttribute('position', new THREE.BufferAttribute(bgPos, 3));
+        const bgMat = new THREE.PointsMaterial({ size: 0.4, color: 0xffddee, transparent: true, opacity: 0.25 });
+        scene.add(new THREE.Points(bgGeometry, bgMat));
+
+        // --- 主粒子系统 ---
+        const particleCount = 7000; 
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        let targetPositions = new Float32Array(particleCount * 3);
+
+        for(let i = 0; i < particleCount * 3; i++) positions[i] = (Math.random() - 0.5) * 100;
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+        // 纹理
+        function getPinkTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            g.addColorStop(0, 'rgba(255, 255, 255, 1)'); 
+            g.addColorStop(0.2, 'rgba(255, 255, 255, 0.9)');
+            g.addColorStop(0.5, 'rgba(255, 255, 255, 0.1)');
+            g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 64, 64);
+            const t = new THREE.Texture(canvas); t.needsUpdate = true; return t;
+        }
+
+        const material = new THREE.PointsMaterial({
+            size: 0.5,
+            map: getPinkTexture(),
+            transparent: true,
+            opacity: 0.95, 
+            // 【关键】颜色：#ff85a2 (不淡不艳的完美樱花粉)
+            color: new THREE.Color('#ff85a2'), 
+            blending: THREE.AdditiveBlending, 
+            depthWrite: false,
+            sizeAttenuation: true
+        });
+
+        const particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+
+        // --- 形状数据 ---
+        function getSurfacePoint(r) {
+            const u = Math.random();
+            const v = Math.random();
+            const theta = 2 * Math.PI * u;
+            const phi = Math.acos(2 * v - 1);
+            return { 
+                x: r * Math.sin(phi) * Math.cos(theta), 
+                y: r * Math.sin(phi) * Math.sin(theta), 
+                z: r * Math.cos(phi) 
+            };
+        }
+
+        const shapes = {
+            // 实心心形 (保留填充)
+            heart: () => {
+                const arr = [];
+                for(let i=0; i<particleCount; i++) {
+                    const t = Math.random() * Math.PI * 2;
+                    const fill = Math.pow(Math.random(), 0.4); 
+
+                    let x = 16 * Math.pow(Math.sin(t), 3);
+                    let y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+                    let z = (Math.random() - 0.5) * 5; 
+                    
+                    const s = 0.75 * fill; 
+                    arr.push(x*s, y*s, z*fill);
+                }
+                return new Float32Array(arr);
+            },
+            sphere: () => {
+                const arr = [];
+                for(let i=0; i<particleCount; i++) {
+                    const p = getSurfacePoint(11);
+                    arr.push(p.x, p.y, p.z);
+                }
+                return new Float32Array(arr);
+            },
+            saturn: () => {
+                const arr = [];
+                const sphereCount = particleCount * 0.65;
+                for(let i=0; i<particleCount; i++) {
+                    let x,y,z;
+                    if(i < sphereCount) {
+                        const p = getSurfacePoint(8); 
+                        x=p.x; y=p.y; z=p.z;
+                    } else {
+                        const ang = Math.random() * Math.PI * 2;
+                        const r = 12 + Math.random() * 6;
+                        x = Math.cos(ang) * r;
+                        z = Math.sin(ang) * r;
+                        y = (Math.random()-0.5) * 0.2;
+                        const tilt = 0.4;
+                        const ty = y*Math.cos(tilt) - z*Math.sin(tilt);
+                        const tz = y*Math.sin(tilt) + z*Math.cos(tilt);
+                        y=ty; z=tz;
+                    }
+                    arr.push(x,y,z);
+                }
+                return new Float32Array(arr);
+            },
+            galaxy: () => { 
+                const arr = [];
+                for(let i=0; i<particleCount; i++) {
+                    const angle = Math.random() * Math.PI * 8;
+                    const r = angle * 0.7 + 2 + Math.random(); 
+                    const arm = Math.floor(Math.random()*3)*(Math.PI*2/3);
+                    const finalA = angle + arm;
+                    arr.push(Math.cos(finalA)*r, (Math.random()-0.5)*(10/r), Math.sin(finalA)*r);
+                }
+                return new Float32Array(arr);
+            },
+            ring: () => {
+                const arr = [];
+                for(let i=0; i<particleCount; i++) {
+                    const ang = Math.random() * Math.PI * 2;
+                    const r = 10 + (Math.random()-0.5)*2; 
+                    arr.push(Math.cos(ang)*r, Math.sin(ang)*r, (Math.random()-0.5)*2);
+                }
+                return new Float32Array(arr);
+            },
+            dna: () => {
+                const arr = [];
+                for(let i=0; i<particleCount; i++) {
+                    const t = (i/particleCount)*Math.PI*10;
+                    let x = Math.cos(t)*5, y = (i/particleCount-0.5)*30, z = Math.sin(t)*5;
+                    if(i%2===0) { x = Math.cos(t+Math.PI)*5; z = Math.sin(t+Math.PI)*5; }
+                    arr.push(x, y, z);
+                }
+                return new Float32Array(arr);
+            }
+        };
+
+        targetPositions = shapes.heart();
+
+        window.setShape = (name) => {
+            if(shapes[name]) {
+                targetPositions = shapes[name]();
+                document.querySelectorAll('.btn-grid button').forEach(b => b.classList.remove('active'));
+                document.getElementById(`btn-${name}`).classList.add('active');
+            }
+        }
+
+        document.getElementById('colorPicker').addEventListener('input', (e) => {
+            material.color.set(e.target.value);
+            document.querySelector('h2').style.color = e.target.value;
+            document.querySelector('h2').style.textShadow = `0 0 10px ${e.target.value}`;
+        });
+
+        // --- 手势 ---
+        let handScale = 1.0;
+        let handDiffusion = 0.0;
+        let handRotationSpeed = 0; 
+        
+        const videoElement = document.getElementById('input_video');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+
+        function onResults(results) {
+            document.getElementById('loader').style.opacity = '0';
+            setTimeout(() => document.getElementById('loader').style.display = 'none', 600);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                if(controls) controls.autoRotate = false;
+                
+                const hand = results.multiHandLandmarks[0];
+                const thumb = hand[4];
+                const index = hand[8];
+                const handCenter = hand[9]; 
+                
+                const dist = Math.sqrt(Math.pow(thumb.x-index.x,2) + Math.pow(thumb.y-index.y,2));
+                let targetS = (dist - 0.02) * 8;
+                targetS = Math.max(0.1, Math.min(targetS, 3.5));
+                handScale += (targetS - handScale) * 0.15;
+
+                if (handCenter.x < 0.4) handRotationSpeed = -(0.4 - handCenter.x) * 0.2; 
+                else if (handCenter.x > 0.6) handRotationSpeed = (handCenter.x - 0.6) * 0.2;
+                else handRotationSpeed *= 0.85;
+
+                statusDot.style.background = '#ff85a2';
+                statusDot.style.boxShadow = '0 0 10px #ff85a2';
+                statusText.innerText = "手势连接稳定";
+                statusText.style.color = "#ff85a2";
+
+                if (dist > 0.25) handDiffusion += (2.0 - handDiffusion) * 0.05;
+                else handDiffusion += (0.0 - handDiffusion) * 0.1;
+
+            } else {
+                if(controls) controls.autoRotate = true;
+                statusDot.style.background = '#555';
+                statusDot.style.boxShadow = 'none';
+                statusText.innerText = "等待信号...";
+                statusText.style.color = "#888";
+                handScale += (1.0 + Math.sin(Date.now()*0.002)*0.1 - handScale) * 0.05;
+                handDiffusion *= 0.9;
+                handRotationSpeed *= 0.95;
+            }
+        }
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onResults);
+
+        const cam = new Camera(videoElement, {
+            onFrame: async () => await hands.send({image: videoElement}),
+            width: 640, height: 480
+        });
+        cam.start();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if(controls) controls.update();
+
+            particles.rotation.y += handRotationSpeed;
+
+            const currentPos = geometry.attributes.position.array;
+            for(let i=0; i<particleCount; i++) {
+                const ix = i*3, iy = i*3+1, iz = i*3+2;
+                currentPos[ix] += (targetPositions[ix] - currentPos[ix]) * 0.05;
+                currentPos[iy] += (targetPositions[iy] - currentPos[iy]) * 0.05;
+                currentPos[iz] += (targetPositions[iz] - currentPos[iz]) * 0.05;
+                
+                if(handDiffusion > 0.01) {
+                    currentPos[ix] += (Math.random()-0.5) * handDiffusion;
+                    currentPos[iy] += (Math.random()-0.5) * handDiffusion;
+                    currentPos[iz] += (Math.random()-0.5) * handDiffusion;
+                }
+            }
+            geometry.attributes.position.needsUpdate = true;
+
+            particles.scale.set(handScale, handScale, handScale);
+            material.size = Math.max(0.1, handScale * 0.45); 
+            material.opacity = Math.min(1.0, 0.5 + handScale * 0.4);
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        window.toggleFullScreen = () => {
+            if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+            else if (document.exitFullscreen) document.exitFullscreen();
+        }
+    </script>
+</body>
+</html>
